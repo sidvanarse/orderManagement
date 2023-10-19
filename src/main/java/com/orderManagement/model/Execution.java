@@ -21,4 +21,12 @@ public class Execution {
     private ExecutionType type;
     private double price;
     private String bookName;
+    /**
+     * Get's a unique key for the execution
+     *
+     * @return The corresponding unique key.
+     */
+    public String getKey(){
+        return bookName + instrumentId + type;
+    }
 }

@@ -37,6 +37,8 @@ public class ExecutionServiceImpl implements ExecutionService, SmartLifecycle {
 
     private ConcurrentHashMap<String,List<ExecutionEntity>> executionsMap = new ConcurrentHashMap<>();
 
+    private final ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
+
     @Autowired
     public ExecutionServiceImpl(BookService bookService, OrderService orderService, ExecutionRepository executionRepository) {
         this.bookService = bookService;
@@ -55,12 +57,17 @@ public class ExecutionServiceImpl implements ExecutionService, SmartLifecycle {
             throw new BookOpenException("Book with the name " + execution.getBookName() + " is still open. Can not run execution on open book.");
         }
         saveExecutionInDb(execution);
-        List<OrderEntity> orderList = orderService.getActiveOrdersForBook(execution.getBookName());
-        if(execution.getType().equals(ExecutionType.OFFER)){
-            handleOfferExecutions(orderList,execution);
-        }
-        else{
-            handleAskExecutions(orderList,execution);
+        //We lock at unique execution as we need to operate on latest data.
+        //If we receive two execution of same key at same time then we might get wrong result on remaining quantity.
+        //Hence, this lock is required
+        synchronized (locks.computeIfAbsent(execution.getKey(), k -> new Object())) {
+            List<OrderEntity> orderList = orderService.getActiveOrdersForBook(execution.getBookName());
+            if(execution.getType().equals(ExecutionType.OFFER)){
+                handleOfferExecutions(orderList,execution);
+            }
+            else{
+                handleAskExecutions(orderList,execution);
+            }
         }
     }
 
@@ -81,6 +88,7 @@ public class ExecutionServiceImpl implements ExecutionService, SmartLifecycle {
 
     private void handleOfferExecutions(List<OrderEntity> orderList,Execution execution){
         List<OrderEntity> buyOrders = orderList.stream()
+                .filter(order-> order.getRemainingQuantity() > 0)
                 .filter(order -> order.getType() == OrderType.BUY)
                 .filter(order -> order.getInstrumentId() == (execution.getInstrumentId()))
                 .filter(order -> order.getPrice() >= execution.getPrice())
@@ -103,6 +111,7 @@ public class ExecutionServiceImpl implements ExecutionService, SmartLifecycle {
 
     private void handleAskExecutions(List<OrderEntity> orderList,Execution execution){
         List<OrderEntity> sellOrders = orderList.stream()
+                .filter(order-> order.getRemainingQuantity() > 0)
                 .filter(order -> order.getType() == OrderType.SELL)
                 .filter(order -> order.getInstrumentId() == (execution.getInstrumentId()))
                 .filter(order -> order.getPrice() <= execution.getPrice())
@@ -138,6 +147,7 @@ public class ExecutionServiceImpl implements ExecutionService, SmartLifecycle {
     @Override
     public void stop() {
         executionsMap.clear();
+        locks.clear();
         isRunning = false;
     }
 

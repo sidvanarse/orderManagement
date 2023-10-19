@@ -10,10 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -31,6 +28,8 @@ public class OrderServiceImpl implements OrderService, SmartLifecycle {
     private volatile boolean isRunning;
 
     private ConcurrentHashMap<String, List<OrderEntity>> bookOrdersMap = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<Long, Object> idLocks = new ConcurrentHashMap<>();
 
     @Autowired
     public OrderServiceImpl(BookService bookService, OrdersRepository ordersRepository) {
@@ -74,21 +73,24 @@ public class OrderServiceImpl implements OrderService, SmartLifecycle {
         if(bookService.isBookClosed(order.getBookName())){
             throw new BookClosedException("Book with the name " + order.getBookName() + " is closed.");
         }
-        Optional<OrderEntity> pastOrder = ordersRepository.findById(order.getOrderId());
-        if(pastOrder.isPresent()){
-            if(!pastOrder.get().isActive()){
-                throw new InactiveOrderException("Order with id " + order.getOrderId() + " is not active, can not edit order.");
+        // take lock if we receive two edits on same order. Only one can win and other will get rejected with InactiveOrderException
+        synchronized (idLocks.computeIfAbsent(order.getOrderId(), k -> new Object())) {
+            Optional<OrderEntity> pastOrder = ordersRepository.findById(order.getOrderId());
+            if(pastOrder.isPresent()){
+                if(!pastOrder.get().isActive()){
+                    throw new InactiveOrderException("Order with id " + order.getOrderId() + " is not active, can not edit order.");
+                }
+                OrderEntity editedOrder = OrderEntity.toEntity(order);
+                editedOrder.setPreviousOrderId(order.getOrderId());
+                editedOrder = ordersRepository.save(editedOrder);
+                pastOrder.get().setActive(false);
+                ordersRepository.save(pastOrder.get());
+                updateInMemoryMap(pastOrder.get(),editedOrder,order.getBookName());
+                return editedOrder.toBean();
             }
-            OrderEntity editedOrder = OrderEntity.toEntity(order);
-            editedOrder.setPreviousOrderId(order.getOrderId());
-            editedOrder = ordersRepository.save(editedOrder);
-            pastOrder.get().setActive(false);
-            ordersRepository.save(pastOrder.get());
-            updateInMemoryMap(pastOrder.get(),editedOrder,order.getBookName());
-            return editedOrder.toBean();
-        }
-        else{
-            throw new OrderNotAvailableException("order with order id" + order.getOrderId() + " is not available in the system. Can not edit.");
+            else{
+                throw new OrderNotAvailableException("order with order id" + order.getOrderId() + " is not available in the system. Can not edit.");
+            }
         }
     }
     @Override
@@ -174,6 +176,7 @@ public class OrderServiceImpl implements OrderService, SmartLifecycle {
     @Override
     public void stop() {
         bookOrdersMap.clear();
+        idLocks.clear();
         isRunning = false;
     }
 

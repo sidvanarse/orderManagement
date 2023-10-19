@@ -15,7 +15,6 @@ public class BooleanConverter implements AttributeConverter<Boolean, String> {
             } else {
                 return "0";
             }
-
         }
         return null;
     }

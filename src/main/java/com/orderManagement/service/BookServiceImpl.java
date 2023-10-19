@@ -34,11 +34,7 @@ public class BookServiceImpl implements BookService, SmartLifecycle {
     @Override
     @Transactional
     public Optional<Book> findByName(String bookName) {
-        BookEntity bookEntity =  bookRepository.findByBookName(bookName);
-        if (!Objects.isNull(bookEntity)) {
-            return Optional.of(bookEntity.toBean());
-        }
-        return Optional.empty();
+        return Optional.ofNullable(booksMap.getOrDefault(bookName,null));
     }
 
     @Override
